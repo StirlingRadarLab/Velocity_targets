@@ -146,13 +146,13 @@ width = src.width
 height = src.height
 
 
-# part of the image        
-col_off = 7700
-row_off = 0
-width = 1200
-height = 1200
+# Selecting only part of the full image        
+col_off = 7700     # styart column
+row_off = 0        # start row
+width = 1200       # size for column
+height = 1200      # size for rows
 
-# # part of the image        
+# # part of the image (other)        
 # col_off = 1800*sub_win[0]
 # row_off = 450*sub_win[1]
 # width = 200*sub_win[0]

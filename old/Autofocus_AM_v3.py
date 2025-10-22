@@ -1,11 +1,5 @@
-# Armando Marino 09/07/2025
+# Armando Marino 09/10/2025
 
-# system library
-# import sys
-# sys.path.insert(0, 'C:\\Programms\\Python\\Libraries\\')
-# this library is used to tell Python where our functions or libraries are. Since we are working with a single script, 
-# we will not use this library now but you may want to use it in the future. You need to make sure that the 
-# folder is the one containing your user libraries. 
 
 import sys
 sys.path.insert(0, '/home/am221/C/Programs/Python_Lib')
@@ -23,12 +17,7 @@ import os
 # a useful library for managing path with different OS
 from pathlib import Path 
 
-import SAR_Utilities as sar
-
-
 import pandas as pd
-  
-
 import tqdm
 
 # for file copying
@@ -37,19 +26,30 @@ import shutil
 import time
 
 
-# Import the required libraries
+# Import the required libraries for GIS
 import rasterio
 from rasterio.windows import Window
 from rasterio.transform import Affine
 
+# for exploring xml files
 import xml.etree.ElementTree as ET
 import glob
 
+# close all plots before running new ones
 plt.close('all')
 
 
 #%%
 def read_sentinel1_params(safe_folder):
+    """
+    Read the xml parameters for the Sentinel-1 acquisiton 
+    Parameters:
+        safe_folder: Foilder where the safe file is present.
+        
+    Returns:
+        prfs, center_freq (float)
+        
+    """
     ann_files = glob.glob(os.path.join(safe_folder, "annotation", "*.xml"))
     if not ann_files:
         raise FileNotFoundError("No annotation XMLs found in SAFE package")
@@ -184,11 +184,33 @@ width = src.width
 height = src.height
 
 
-# part of the image        
-col_off = 7700
+# # part of the image      VIEW 1   
+# col_off = 7700
+# row_off = 0
+# width = 1200
+# height = 1200
+
+
+# part of the image        VIEW 2
+col_off = 9700
 row_off = 0
-width = 1200
-height = 1200
+width = 2000
+height = 2000
+
+
+# part of the image        VIEW 3
+col_off = 11700
+row_off = 0
+width = 2000
+height = 2000
+
+
+# # part of the image        
+# col_off = 20000
+# row_off = 1000
+# width = 2400
+# height = 2400
+
 
 # # part of the image        
 # col_off = 1800*sub_win[0]
@@ -244,15 +266,7 @@ hg = int(size_imaget /2)
 
 
 
-############# only seen in VH
-# # SHIP 2       
-# col_cr = 367
-# row_cr =  908
-#############
-# # SHIP 3       
-# col_cr = 1069
-# row_cr =  828
-# #############
+############# VIEW 1
 # # LAND     
 # col_cr = 938
 # row_cr =  645
@@ -265,7 +279,29 @@ hg = int(size_imaget /2)
 # SHIP 2       
 col_cr_ship = 788
 row_cr_ship =  96
-#
+###################################################
+
+
+############# VIEW 2
+#############
+# SHIP 1       
+col_cr_ship = 134
+row_cr_ship = 1055
+####################################
+
+
+############# VIEW 3
+#############
+# SHIP 1       
+col_cr_ship = 547
+row_cr_ship = 907
+# SHIP 2       
+col_cr_ship = 150
+row_cr_ship = 1802
+# SHIP 3       
+col_cr_ship = 947
+row_cr_ship = 1829
+####################################
 
 
 c = 299792458.0
@@ -295,12 +331,12 @@ plt.figure()
 plt.imshow(np.abs(imgVH_ship), cmap = 'gray', vmin = 0, vmax = 7.5*np.nanmean(np.abs(VH)))
 plt.title("VH for ship ROI")
 
-plt.figure()
-plt.imshow(np.abs(imgVV_sea), cmap = 'gray', vmin = 0, vmax = 2.5*np.nanmean(np.abs(VV)))
-plt.title("VV for sea ROI")
-plt.figure()
-plt.imshow(np.abs(imgVH_sea), cmap = 'gray', vmin = 0, vmax = 2.5*np.nanmean(np.abs(VH)))
-plt.title("VH for sea ROI")
+# plt.figure()
+# plt.imshow(np.abs(imgVV_sea), cmap = 'gray', vmin = 0, vmax = 2.5*np.nanmean(np.abs(VV)))
+# plt.title("VV for sea ROI")
+# plt.figure()
+# plt.imshow(np.abs(imgVH_sea), cmap = 'gray', vmin = 0, vmax = 2.5*np.nanmean(np.abs(VH)))
+# plt.title("VH for sea ROI")
 
 
 
@@ -378,9 +414,9 @@ def image_entropy(img, bins=256):
 def refocus_image(img_FFT, max_val, centre):
     dim = img_FFT.shape
     x = np.linspace(0, 1, dim[0])
-    quadratic = (max_val) * (1 - (x - centre)**2)
-    # phase_corr = np.exp(-1j * quadratic * (2*np.pi/lambda_c)/R0)
-    phase_corr = np.exp(-1j * quadratic * (2*np.pi/lambda_c))
+    # quadratic = (max_val) * (1 - (x - centre)**2)
+    quadratic = (max_val) * ( (x - centre)**2 )
+    phase_corr = np.exp(1j * (2*np.pi/lambda_c) * (R0 + 1/R0*quadratic ) )
     # img_corr_FFT = img_FFT * phase_corr[:, np.newaxis]
     img_corr_FFT = img_FFT * phase_corr
     img_corr = ifft(ifftshift(img_corr_FFT, axes=1), axis=1)
@@ -395,20 +431,22 @@ def refocus_image(img_FFT, max_val, centre):
 # ###############################################################
 ################## THIS BIT TESTS IT WITH A DUMMY QUADRATIC
 min_val = 0        # start value
-max_val = 1       # end value
-
+max_val = 1.15       # end value
+centre = 50
 # Quadratic array (parabolic increase)
 # normalized from 0 -> 1, then scaled to min_val -> max_val
 x = np.linspace(0, 1, dim[0])
-quadratic = min_val + (max_val - min_val) * (1 - (x-0.5)**2)
+quadratic = min_val + (max_val - min_val) * (1 - (x-centre)**2)
 
 plt.figure()
 plt.plot(quadratic)
 plt.title("Quadratic function")
 
-# imgVV_FFT_corr = imgVV_FFT*np.exp(-1j*quadratic*(2*np.pi/lambda_c)/R0)
+# imgVV_FFT_corr = imgVV_FFT*np.exp(1j*quadratic*(2*np.pi/lambda_c)/R0)
 
-imgVV_FFT_corr = imgVV_FFT*np.exp(-1j*quadratic*(2*np.pi/lambda_c))
+quadratic = (max_val) * ( (x - centre)**2 )
+imgVV_FFT_corr = imgVV_FFT*np.exp(1j * (2*np.pi/lambda_c) * (R0 + 1/R0*quadratic ) )
+    
 
 imgVV_corr   = ifft(ifftshift(imgVV_FFT_corr, axes=1), axis=1)
 imgVV_nocorr = ifft(ifftshift(imgVV_FFT, axes=1), axis=1)
@@ -436,10 +474,11 @@ print(f"Entropy for refocused: {H_cor:.3f}")
 
 # searcing parameters
 grid_size = 50
-max_vals_ext = 100
-centers_ext = 3.5
+max_vals_ext = 1.15   # this is the value at far range 
+min_value = 0.9       # this is the value at near range
+centers_ext = 100
 # vectors to swip maximum and centre of the quadratic
-max_vals = np.linspace(0, max_vals_ext, grid_size)
+max_vals = np.linspace(min_value, max_vals_ext, grid_size)
 centres = np.linspace(-centers_ext, centers_ext, grid_size)
 
 best_entropy = np.inf
