@@ -35,86 +35,20 @@ from rasterio.transform import Affine
 import xml.etree.ElementTree as ET
 import glob
 
+import xml.etree.ElementTree as ET
+from datetime import datetime, timezone
+
 # close all plots before running new ones
 plt.close('all')
 
 
-#%%
-# def read_sentinel1_params(safe_folder):
-#     """
-#     Read the xml parameters for the Sentinel-1 acquisiton 
-#     Parameters:
-#         safe_folder: Foilder where the safe file is present.
-        
-#     Returns:
-#         prfs, center_freq (float)
-        
-#     """
-#     ann_files = glob.glob(os.path.join(safe_folder, "annotation", "*.xml"))
-#     if not ann_files:
-#         raise FileNotFoundError("No annotation XMLs found in SAFE package")
+#%% FUNCTIONS TO READ SENTINEL PARAMETERS FROM THE MANIFEST 
 
-#     tree = ET.parse(ann_files[0])
-#     root = tree.getroot()
-
-#     ns = {
-#         's1': "http://www.esa.int/safe/sentinel-1.0",
-#         's1sarl1': "http://www.esa.int/safe/sentinel-1.0/sentinel-1/sar/level-1"
-#     }
-
-#     # Radar frequency
-#     center_freq = root.findtext(".//s1sarl1:radarFrequency", namespaces=ns)
-#     if center_freq is None:
-#         center_freq = root.findtext(".//radarFrequency")
-#     if center_freq is None:
-#         raise ValueError("radarFrequency not found in annotation file")
-#     center_freq = float(center_freq)
-
-#     # Try PRFs directly
-#     prfs = [x.text for x in root.findall(".//s1sarl1:pulseRepetitionFrequencyList/s1sarl1:pulseRepetitionFrequency", ns)]
-#     if not prfs:
-#         prfs = [x.text for x in root.findall(".//pulseRepetitionFrequencyList/pulseRepetitionFrequency")]
-#     prfs = [float(x) for x in prfs]
-
-#     # Fallback: compute from azimuthTimeInterval
-#     if not prfs:
-#         ati = root.findtext(".//s1sarl1:azimuthTimeInterval", namespaces=ns)
-#         if ati is None:
-#             ati = root.findtext(".//azimuthTimeInterval")
-#         if ati:
-#             prfs = [1.0 / float(ati)]
-
-#     return prfs[0], center_freq
-
-
-# import os
-# import glob
-# import xml.etree.ElementTree as ET
-
-
-
-import os
-import glob
-import xml.etree.ElementTree as ET
-import numpy as np
-
-
-
-
+# GENERAL ORBITAL PARAMETERS
 def read_sentinel1_params(safe_folder, orbit_file=None, use_approx_velocity=True, nominal_altitude_m=693000.0):
     """
     Read Sentinel-1 parameters, including approximate or true satellite velocity.
-
-    Parameters
-    ----------
-    safe_folder : str
-        Path to the Sentinel-1 SAFE directory.
-    orbit_file : str or None
-        Optional path to external AUX_POEORB/AUX_RESORB .EOF file.
-    use_approx_velocity : bool
-        If True, compute approximate orbital speed when no orbit info is available.
-    nominal_altitude_m : float
-        Nominal satellite altitude used for approximate speed [m].
+    Also computes slant range times at start, center, and end of swath.
 
     Returns
     -------
@@ -122,9 +56,13 @@ def read_sentinel1_params(safe_folder, orbit_file=None, use_approx_velocity=True
         {
             "prf": float,
             "center_freq": float,
-            "slant_range_time": float,
+            "slant_range_time_center": float,
+            "slant_range_time_start": float,
+            "slant_range_time_end": float,
             "range_pixel_spacing": float,
             "R0": float,
+            "R_start": float,
+            "R_end": float,
             "velocity_vector": (vx, vy, vz) or None,
             "velocity_magnitude": float,
             "velocity_source": str
@@ -164,20 +102,36 @@ def read_sentinel1_params(safe_folder, orbit_file=None, use_approx_velocity=True
             prfs = [1.0 / float(ati)]
     prf = prfs[0]
 
-    # --- slant range time ---
-    slant_range_time = ann_root.findtext(".//s1sarl1:slantRangeTime", namespaces=ns)
-    if slant_range_time is None:
-        slant_range_time = ann_root.findtext(".//slantRangeTime")
-    slant_range_time = float(slant_range_time)
+    # --- slant range time (center) ---
+    slant_range_time_center = ann_root.findtext(".//s1sarl1:slantRangeTime", namespaces=ns)
+    if slant_range_time_center is None:
+        slant_range_time_center = ann_root.findtext(".//slantRangeTime")
+    slant_range_time_center = float(slant_range_time_center)
 
     # --- range pixel spacing ---
     range_pixel_spacing = ann_root.findtext(".//s1sarl1:rangePixelSpacing", namespaces=ns)
     if range_pixel_spacing is None:
         range_pixel_spacing = ann_root.findtext(".//rangePixelSpacing")
-    range_pixel_spacing = float(range_pixel_spacing)
+    range_pixel_spacing = float(range_pixel_spacing)  # meters
 
-    # --- derived R0 ---
-    R0 = c * slant_range_time / 2.0
+    # --- number of range samples ---
+    number_of_range_samples = ann_root.findtext(".//s1sarl1:numberOfSamples", namespaces=ns)
+    if number_of_range_samples is None:
+        number_of_range_samples = ann_root.findtext(".//numberOfSamples")
+    number_of_range_samples = int(number_of_range_samples)
+
+    # --- compute sample spacing in time ---
+    delta_t = 2 * range_pixel_spacing / c  # slant range time per sample
+
+    # --- compute start and end slant range times ---
+    i_center = (number_of_range_samples - 1) / 2
+    slant_range_time_start = slant_range_time_center - i_center * delta_t
+    slant_range_time_end   = slant_range_time_center + i_center * delta_t
+
+    # --- convert to slant range distances ---
+    R0 = c * slant_range_time_center / 2.0
+    R_start = c * slant_range_time_start / 2.0
+    R_end   = c * slant_range_time_end / 2.0
 
     # --- initialize velocity lists ---
     vx_list, vy_list, vz_list = [], [], []
@@ -240,15 +194,83 @@ def read_sentinel1_params(safe_folder, orbit_file=None, use_approx_velocity=True
     return {
         "prf": prf,
         "center_freq": center_freq,
-        "slant_range_time": slant_range_time,
+        "slant_range_time_center": slant_range_time_center,
+        "slant_range_time_start": slant_range_time_start,
+        "slant_range_time_end": slant_range_time_end,
         "range_pixel_spacing": range_pixel_spacing,
         "R0": R0,
+        "R_start": R_start,
+        "R_end": R_end,
         "velocity_vector": velocity_vector,
         "velocity_magnitude": velocity_magnitude,
         "velocity_source": velocity_source,
     }
 
 
+
+# TIMING PARAMETERS
+def get_sentinel1_acquisition_duration(safe_folder):
+    """
+    Robustly extract start/stop acquisition times for any Sentinel-1 SAFE (SLC or GRD).
+    Works whether annotation XMLs exist or not.
+    """
+    # --- Case 1: annotation XMLs ---
+    ann_files = glob.glob(os.path.join(safe_folder, "**", "*.xml"), recursive=True)
+    ann_files = [f for f in ann_files if "annotation" in f.lower()]
+    if ann_files:
+        ann_file = ann_files[0]
+        tree = ET.parse(ann_file)
+        root = tree.getroot()
+        ns = {
+            "s1": "http://www.esa.int/safe/sentinel-1.0",
+            "s1sarl1": "http://www.esa.int/safe/sentinel-1.0/sentinel-1/sar/level-1",
+        }
+        start_time = root.findtext(".//s1:adsHeader/s1:startTime", namespaces=ns) or root.findtext(".//startTime")
+        stop_time  = root.findtext(".//s1:adsHeader/s1:stopTime", namespaces=ns) or root.findtext(".//stopTime")
+        source = ann_file
+    else:
+        # --- Case 2: manifest.safe ---
+        manifest_path = os.path.join(safe_folder, "manifest.safe")
+        if not os.path.exists(manifest_path):
+            raise FileNotFoundError(f"No annotation or manifest.safe found under {safe_folder}")
+        tree = ET.parse(manifest_path)
+        root = tree.getroot()
+        start_time = root.findtext(".//startTime")
+        stop_time  = root.findtext(".//stopTime")
+        source = manifest_path
+
+    if not start_time or not stop_time:
+        raise ValueError(f"Could not find start/stop time in {source}")
+
+    start_dt = parse_sentinel1_time(start_time)
+    stop_dt  = parse_sentinel1_time(stop_time)
+    duration = (stop_dt - start_dt).total_seconds()
+
+    return {
+        "start_time": start_dt,
+        "stop_time": stop_dt,
+        "duration_seconds": duration,
+        "source": source,
+    }
+
+def parse_sentinel1_time(timestr):
+    """Parse Sentinel-1 time strings robustly (with/without 'Z' and fractional seconds)."""
+    if timestr is None:
+        return None
+    timestr = timestr.strip()
+    # Remove trailing 'Z' if present
+    if timestr.endswith("Z"):
+        timestr = timestr[:-1]
+    # Try parsing with microseconds
+    for fmt in ("%Y-%m-%dT%H:%M:%S.%f", "%Y-%m-%dT%H:%M:%S"):
+        try:
+            dt = datetime.strptime(timestr, fmt)
+            return dt.replace(tzinfo=timezone.utc)
+        except ValueError:
+            continue
+    raise ValueError(f"Unrecognized Sentinel-1 time format: {timestr}")
+    
+    
 
 #%% Function for retrivial using traditional processing of Doppler centroid
 
@@ -295,7 +317,7 @@ def velocity_estimation(img, lambda_c, prf):
     print(f"PRF: {prf:.2f} Hz")
     print(f"Center frequency: {center_freq/1e9:.3f} GHz (λ={lambda_c:.3f} m)")
     print(f"Estimated Doppler centroid: {doppler_centroid:.2f} Hz")
-    # print(f"Estimated vessel along-track speed: {v_az:.2f} m/s")
+    # print(f"Estimated vessel across-track speed: {v_az:.2f} m/s")
     
     return freq_axis, doppler_centroid, v_az, power_spectrum
 
@@ -323,25 +345,29 @@ def image_entropy(img, bins=256):
 
 
 # Function to refocus an image given parameters
-def refocus_image(img_FFT, max_val, centre):
+def refocus_image(img_FFT, max_val, va):
     """
     Apply a transformation of the Doppler based on the low describing the 
     Doppler phase history. This provides re-focusing (it can blare or sharpen the image). 
     Parameters:
         img_FFT: The Fast Furier Transform of the imaget (usually 64x64)
         max_val: the adjustment parameter (connected to vx) to be tested
-        centre: the shift parameter (vy) to be tested
+        va: the aximuth velocity to be tested
                 
     Returns:
         H: information entropy 
     """  
-    dim = img_FFT.shape
-    x = np.linspace(0, 1, dim[0])
+    N_az = img_FFT.shape[0]
+   
+    # create the azimuth time axis
+    t_az = (np.arange(N_az)) * duration
+
+    # x = np.linspace(0, 1, dim[0])
     # quadratic = (max_val) * (1 - (x - centre)**2)
     # quadratic = (max_val) * ( (x - centre)**2 )
 
-    quadratic = (max_val) * ( (vp - centre)**2*x**2 )
-    phase_corr = np.exp(1j * (2*np.pi/lambda_c) * (R0 + 1/R0*quadratic ) )
+    quadratic = (max_val) * ( (vp - va)**2 * t_az**2 )
+    phase_corr = np.exp(1j * (2*np.pi/lambda_c) * (R0_ship + 1/R0_ship * quadratic ) )
     # img_corr_FFT = img_FFT * phase_corr[:, np.newaxis]
     img_corr_FFT = img_FFT * phase_corr
     img_corr = ifft(ifftshift(img_corr_FFT, axes=1), axis=1)
@@ -371,20 +397,40 @@ win = [7,7]     # averagiung window for boxcar and algorithms
 sub_win = [1,1]  # subsampling window for reducing size (partial multilook)
 
 # reading the S1 parameters in manifest
+# location of manifest
 manifest_path = "S1A_IW_SLC__1SDV_20240102T092331_20240102T092350_051926_06460F_974E.SAFE" # path to Sentinel-1 SAFE manifest
+
+# getting orbital parameters
 params = read_sentinel1_params(path / manifest_path)
 
 prf = params["prf"]
 center_freq = params["center_freq"]
-slant_range_time = params["slant_range_time"]
+t_center = params['slant_range_time_center']
+t_start  = params['slant_range_time_start']
+t_end    = params['slant_range_time_end']
 range_pixel_spacing = params["range_pixel_spacing"]
 R0 = params["R0"]
+R_start  = params["R_start"]
+R_end  = params["R_end"]
+        
+# # Print in aligned format
+# for name in params:
+#     print(f"{name:<25} : {params[name]}")
+    
+    
 if params["velocity_vector"] is not None:
     vx, vy, vz = params["velocity_vector"]
     vp = vx
 vp = params["velocity_magnitude"]
 
-            
+# getrting timing parameters
+timing = get_sentinel1_acquisition_duration(path / manifest_path)
+start = timing['start_time']            
+stop = timing['stop_time']
+duration = timing['duration_seconds']
+
+for name in timing:
+    print(f"{name:<25} : {timing[name]}")
         
 # from previous runs:
 # center_freq = 5405000454.33435
@@ -526,6 +572,11 @@ elif flag_ROI == "ROI3":
 ################################
 
 
+
+# R0 for imagette
+R0_ship = R_start + (row_off + row_cr_ship)*range_pixel_spacing 
+
+
 #%% opening the images
 # we need a for loop to run through all the acquisitions in the time series
 for i in range(num_acq):
@@ -661,6 +712,11 @@ if len(gf0) > 0:
 # remove noise outside band in equalisation
 spectrum_medio[spectrum_medio < 0.1] = 1  
 
+N_az = spectrum_medio.shape[0]
+df = prf / N_az # azimuth frequency resolution [Hz]
+
+# create the frequancy axis
+freq_axis = (np.arange(N_az) - N_az//2) * df
 
 fig = plt.figure()
 figManager = plt.get_current_fig_manager()
@@ -675,9 +731,13 @@ fig = plt.figure()
 figManager = plt.get_current_fig_manager()
 figManager.full_screen_toggle()
 plt.title('Smoothed mean spectrum for ' + flag_ship + ' in ' + flag_ROI)
-plt.plot(spectrum_medio)
+plt.plot(freq_axis, spectrum_medio)
+plt.axvline(x=0, color='red', linestyle='--', linewidth=1, label='Zero')
+plt.xlabel("Frequency [Hz]")
+plt.ylabel("Amplitude")
 fig_filename = "Mean_Spectrum_ship_" + flag_ship + '_' + flag_ROI
 fig.savefig(path_save / fig_filename )  
+
 
 
 
@@ -694,9 +754,9 @@ fig.savefig(path_save / fig_filename )
 
 vessel_velocity = -(lambda_c/2.0) * (doppler_centroid_ship - doppler_centroid_sea)
 
-print(f"Estimated vessel along-track speed: {v_az_ship:.2f} m/s")
-print(f"Estimated sea along-track speed: {v_az_sea:.2f} m/s")
-print(f"Estimated vessel along-track speed: {vessel_velocity:.2f} m/s")
+print(f"Estimated vessel across-track speed: {v_az_ship:.2f} m/s")
+print(f"Estimated sea across-track speed: {v_az_sea:.2f} m/s")
+print(f"Estimated vessel across-track speed: {vessel_velocity:.2f} m/s")
 
 
 
@@ -724,7 +784,7 @@ fig_filename = "Quadratic"
 fig.savefig(path_save / fig_filename ) 
 
 # imgVV_FFT_corr = imgVV_FFT*np.exp(1j*quadratic*(2*np.pi/lambda_c)/R0)
-img_FFT_corr = img_FFT*np.exp(1j * (2*np.pi/lambda_c) * (R0 + 1/R0*quadratic ) )
+img_FFT_corr = img_FFT*np.exp(1j * (2*np.pi/lambda_c) * (R0_ship + 1/R0_ship*quadratic ) )
     
 img_corr   = ifft(ifftshift(img_FFT_corr, axes=1), axis=1)
 img_nocorr = ifft(ifftshift(img_FFT, axes=1), axis=1)
@@ -750,7 +810,7 @@ fig.savefig(path_save / fig_filename )
 H_org = image_entropy(img_nocorr, bins=256)
 H_cor = image_entropy(img_corr, bins=256)
 print(f"Entropy for original: {H_org:.3f}")
-print(f"Entropy for refocused: {H_cor:.3f}")
+# print(f"Entropy for refocused: {H_cor:.3f}")
 
 
 
@@ -759,31 +819,35 @@ print(f"Entropy for refocused: {H_cor:.3f}")
 #%%  ##########################################################
 ##########  AUTOFOCUS ALGORITHM ###############################
 # searcing parameters
-grid_size = 50 # number of searching samples used
-max_vals_ext = 1.15   # this is the value at far range 
-min_value = 0.9       # this is the value at near range
-centers_ext = 14     # maximum shift allowed
+grid_size = 100       # number of searching samples used
+max_vals_FR = 1.15   # this is the value at far range 
+min_value_NR = 0.9   # this is the value at near range
+va_ext = 20          # maximum value for azimuith velocity
+
+# max_vals_FR = 1000  # this is the value at far range 
+# min_value_NR = 0.001   # this is the value at near range
+# va_ext = 1000          # maximum value for azimuith velocity
 
 # vectors to swip maximum and centre of the quadratic
-max_vals = np.linspace(min_value, max_vals_ext, grid_size)
-centres = np.linspace(-centers_ext, centers_ext, grid_size)
+adj_vals = np.linspace(min_value_NR, max_vals_FR, grid_size)
+va_array = np.linspace(-va_ext, va_ext, grid_size)
 
 best_entropy = np.inf
 best_params = None
 
 H = np.zeros([grid_size, grid_size])  
 
-for i in range(len(max_vals)):
-    mv = max_vals[i]
-    for j in range(len(centres)):
-        c = centres[j]
-        img_corr = refocus_image(img_FFT, mv, c)
+for i in range(len(adj_vals)):
+    adj = adj_vals[i]
+    for j in range(len(va_array)):
+        va = va_array[j]
+        img_corr = refocus_image(img_FFT, adj, va)
         H[i, j] = image_entropy(np.abs(img_corr))  
         if H[i, j] < best_entropy:
             best_entropy = H[i, j]
-            best_params = (mv, c)
+            best_params = (adj, va)
 
-print(f"Best parameters: max_val={best_params[0]:.3f}, centre={best_params[1]:.3f}, entropy={best_entropy:.3f}")
+print(f"Best parameters: adj_val={best_params[0]:.3f}, va={best_params[1]:.3f}, entropy={best_entropy:.3f}")
 
 # Generate best-focused image
 img_best = refocus_image(img_FFT, *best_params)
@@ -819,12 +883,12 @@ plt.imshow(H,
            cmap='gray', 
            vmin=np.min(H), 
            vmax=np.max(H),
-           extent=[centres[0], centres[-1], max_vals[0], max_vals[-1]],  # x_min, x_max, y_min, y_max
+           extent=[va_array[0], va_array[-1], adj_vals[0], adj_vals[-1]],  # x_min, x_max, y_min, y_max
            origin='lower',   # ensures y-axis starts from min_val at bottom
            aspect='auto')    # avoids stretching
 plt.colorbar(label='Entropy')
-plt.xlabel('centre')
-plt.ylabel('max_val')
+plt.xlabel('Azimuth velocity (m/s)')
+plt.ylabel('R0 mismatch')
 plt.show()
 fig_filename = "EntopyMap_" + flag_ship + '_' + flag_ROI
 fig.savefig(path_save / fig_filename )  
