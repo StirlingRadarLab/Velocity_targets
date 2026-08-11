@@ -191,11 +191,11 @@ def SubAperture_detectors(data, flag_axis, win, flag_vis, path_save):
         plt.savefig(path_save / "subaperture2.png", bbox_inches='tight')
 
         plt.figure()
-        plt.imshow(np.abs(SubCohe), cmap = 'gray', vmin = 0, vmax = 1)
+        plt.imshow(np.abs(SubCohe), cmap = 'gray', vmin = 0.5, vmax = 1)
         plt.title("VV Sub Coherence image")
         plt.savefig(path_save / "SubCohe.png", bbox_inches='tight')
         plt.figure()
-        plt.imshow(np.abs(SubCorr), cmap = 'gray', vmin = 0, vmax = 5.5*np.nanmean(np.abs(SubCorr)))
+        plt.imshow(np.abs(SubCorr), cmap = 'gray', vmin = 1.5*np.nanmean(np.abs(SubCorr)), vmax = 2.5*np.nanmean(np.abs(SubCorr)))
         plt.title("VH Sub Correlation")
         plt.savefig(path_save / "SubCorr.png", bbox_inches='tight')
 
@@ -207,7 +207,7 @@ def SubAperture_detectors(data, flag_axis, win, flag_vis, path_save):
 # defining paths where data are
 path = Path("/home/am221/C/Data/S1/Velocity") 
 path_save = Path("/home/am221/C/Data/S1/Velocity/Sub_detectors")
-path_save_img = Path("/home/am221/C/Data/S1/Velocity/Sub_detector/Images")
+path_save_img = Path("/home/am221/C/Data/S1/Velocity/Sub_detectors/Images")
 
 
 # filtering  windows
@@ -326,8 +326,6 @@ data = VV
 [SubCohe, SubCorr] = SubAperture_detectors(data, flag_axis, win, flag_vis, path_save_img)
 
 
-
-
 #%% Saving output as geotiff
 
 with rasterio.open(fullpath_img) as src:
@@ -350,5 +348,54 @@ with rasterio.open(path_save / "SubCohe.tif", 'w', **out_meta) as dst:
 
 with rasterio.open(path_save / "SubCorr.tif", 'w', **out_meta) as dst:
     dst.write(SubCorr.astype('float32'), 1)
+
+
+
+
+
+#%% Create PowerPoint presentation with output images
+
+from pptx import Presentation
+from pptx.util import Inches, Pt
+from pptx.enum.text import PP_ALIGN
+
+slides_content = [
+    ("Magnitude spectrum of the data",            "spectrum_data.png"),
+    ("Mean Spectrum of the entire image",          "spectrum_medio.png"),
+    ("Magnitude spectrum AFTER removing Hamming",  "spectrum_unhamming.png"),
+    ("Magnitude of FIRST portion of spectrum",     "spectrum1.png"),
+    ("Magnitude of SECOND portion of spectrum",    "spectrum2.png"),
+    ("Magnitude of FIRST subaperture",             "subaperture1.png"),
+    ("Magnitude of SECOND subaperture",            "subaperture2.png"),
+    ("VV Sub Coherence image",                     "SubCohe.png"),
+    ("VH Sub Correlation",                         "SubCorr.png"),
+]
+
+prs = Presentation()
+prs.slide_width  = Inches(13.33)
+prs.slide_height = Inches(7.5)
+
+blank_layout = prs.slide_layouts[6]  # fully blank layout
+
+for title_text, img_file in slides_content:
+    img_path = path_save_img / img_file
+    if not img_path.exists():
+        continue
+
+    slide = prs.slides.add_slide(blank_layout)
+
+    # title text box at the top
+    txBox = slide.shapes.add_textbox(Inches(0.3), Inches(0.15), Inches(12.7), Inches(0.6))
+    tf = txBox.text_frame
+    tf.text = title_text
+    tf.paragraphs[0].alignment = PP_ALIGN.CENTER
+    tf.paragraphs[0].runs[0].font.size = Pt(24)
+    tf.paragraphs[0].runs[0].font.bold = True
+
+    # image centred on the slide
+    slide.shapes.add_picture(str(img_path), Inches(1.5), Inches(0.85), Inches(10.3), Inches(6.3))
+
+prs.save(path_save / "SubAperture_results.pptx")
+print(f"PowerPoint saved to {path_save / 'SubAperture_results.pptx'}")
 
 #%%
