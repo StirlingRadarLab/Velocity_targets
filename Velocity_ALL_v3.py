@@ -290,9 +290,6 @@ def velocity_estimation(img, lambda_c, prf):
         power_spectrum: the magnitude of the Doppler spectrum
         
     """        
-    # Wavelength from frequency
-
-
     # Step 1: Compute azimuth FFT (along-track is typically the rows)
     azimuth_fft = np.fft.fftshift(np.fft.fft(img, axis=1), axes=1)
     # average along ramge lines to get a mean power spectrum 
@@ -306,20 +303,10 @@ def velocity_estimation(img, lambda_c, prf):
     # create the frequancy axis
     freq_axis = (np.arange(N_az) - N_az//2) * df
     
-    spectrum_medio  = (np.sum(abs(img_FFT), axis=0))/(dim[0]) 
 
-    # Smoothing the signal to get a good "unhamming" function
-    Kernel_Spectrum = np.ones((7,))/7
-    for kkk in range (0, 10): spectrum_medio = signal.fftconvolve(spectrum_medio, 
-                                               Kernel_Spectrum, mode='same')
-    # To force that the maximum of my "unhamming" function to be equal 1
-    spectrum_medio  = spectrum_medio/max(spectrum_medio)
-    
-    
     # find the maximum and call it centroid
-    # doppler_centroid = freq_axis[np.argmax(power_spectrum)]
-    doppler_centroid = freq_axis[np.argmax(spectrum_medio)]
-   
+    doppler_centroid = freq_axis[np.argmax(power_spectrum)]
+    
     
     # Step 3: Convert Doppler centroid shift into azimuth velocity
     v_az = -(lambda_c/2.0) * doppler_centroid
@@ -489,8 +476,8 @@ height = src.height    # size in raws
 
 # The following is for focusing on smaller area, wchih is needed in order to 
 # better select the ships 
-# flag_ROI = "ROI1"
-flag_ROI = "ROI2"
+flag_ROI = "ROI1"
+# flag_ROI = "ROI2"
 # flag_ROI = "ROI3"
 # flag_ROI = "ROI4"
 
@@ -699,7 +686,7 @@ fig.savefig(path_save / fig_filename )
 Win = 7
 
 #producing the FFT of the images
-imgVV_FFT = fftshift(fft(imgVV_ship, axis=1), axes=1)
+imgVV_FFT = fftshift(fft(imgVV_ship, axis=0), axes=0)
 imgVH_FFT = fftshift(fft(imgVH_ship, axis=1), axes=1)
 
 # here we use VV as the image for refocusing, but VH could be used as well
